@@ -34,6 +34,10 @@ import (
 )
 
 func (c *APIReconciler) reconcile(ctx context.Context, apiDomainKey dynamiccontext.APIDomainKey, apiBinding *apisv1alpha1.APIBinding) error {
+	// TODO: uncomment and fix the code that handles when an API should be stopped to serve or updated.
+	//  main difference from the syncer, is that we want to serve APIs from all bindings vs serving API only for a specific SyncTarget.
+	//  for now we fixed this by always appending to apiSets, but this is just a temporary workaround.
+
 	c.mutex.RLock()
 	newSet := c.apiSets[apiDomainKey]
 	if newSet == nil {
@@ -51,7 +55,7 @@ func (c *APIReconciler) reconcile(ctx context.Context, apiDomainKey dynamicconte
 
 	if len(newSet) == 0 {
 		// add built-in apiResourceSchema
-		for _, apiResourceSchema := range syncerbuiltin.SyncerSchemas {
+		for _, apiResourceSchema := range syncerbuiltin.UserSchemas {
 			shallow := *apiResourceSchema
 			if shallow.Annotations == nil {
 				shallow.Annotations = make(map[string]string)
@@ -152,6 +156,8 @@ func gvrString(gvr schema.GroupVersionResource) string {
 func (c *APIReconciler) getAllAcceptedResourceSchemas(ctx context.Context, apiBinding *apisv1alpha1.APIBinding) (map[schema.GroupResource]*apisv1alpha1.APIResourceSchema, map[schema.GroupResource]string, error) {
 	apiResourceSchemas := map[schema.GroupResource]*apisv1alpha1.APIResourceSchema{}
 
+	// TODO: check if we need this, because we are not serving cross workspaces and thus it is not possible to have
+	//   different versions of the same API.
 	identityHashByGroupResource := map[schema.GroupResource]string{}
 
 	logger := klog.FromContext(ctx)

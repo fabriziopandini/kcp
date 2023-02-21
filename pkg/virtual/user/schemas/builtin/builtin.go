@@ -30,9 +30,7 @@ import (
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/internalapis"
 )
 
-// syncerSchemas contains a list of internal APIs that should be exposed for the
-// syncer of any SyncTarget.
-var SyncerSchemas map[apisv1alpha1.GroupResource]*apisv1alpha1.APIResourceSchema
+var UserSchemas map[apisv1alpha1.GroupResource]*apisv1alpha1.APIResourceSchema
 
 func init() {
 	genericcontrolplane.Install(legacyscheme.Scheme)
@@ -44,9 +42,9 @@ func init() {
 		panic(err)
 	}
 
-	SyncerSchemas = make(map[apisv1alpha1.GroupResource]*apisv1alpha1.APIResourceSchema, len(apis))
+	UserSchemas = make(map[apisv1alpha1.GroupResource]*apisv1alpha1.APIResourceSchema, len(apis))
 	for _, api := range apis {
-		SyncerSchemas[apisv1alpha1.GroupResource{
+		UserSchemas[apisv1alpha1.GroupResource{
 			Group:    api.Spec.Group,
 			Resource: api.Spec.Names.Plural,
 		}] = api

@@ -38,14 +38,13 @@ import (
 	apisv1alpha1 "github.com/kcp-dev/kcp/pkg/apis/apis/v1alpha1"
 	apisv1alpha1informers "github.com/kcp-dev/kcp/pkg/client/informers/externalversions/apis/v1alpha1"
 	apisv1alpha1listers "github.com/kcp-dev/kcp/pkg/client/listers/apis/v1alpha1"
-	"github.com/kcp-dev/kcp/pkg/indexers"
 	"github.com/kcp-dev/kcp/pkg/logging"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/apidefinition"
 	dynamiccontext "github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/context"
 )
 
 const (
-	ControllerName = "kcp-virtual-syncer-api-reconciler-"
+	ControllerName = "kcp-virtual-user-api-reconciler-"
 )
 
 type CreateAPIDefinitionFunc func(apiBindingWorkspace logicalcluster.Name, apiBindingName string, apiResourceSchema *apisv1alpha1.APIResourceSchema, version string, identityHash string) (apidefinition.APIDefinition, error)
@@ -55,7 +54,6 @@ func NewAPIReconciler(
 	virtualWorkspaceName string,
 	apiBindingInformer apisv1alpha1informers.APIBindingClusterInformer,
 	apiResourceSchemaInformer apisv1alpha1informers.APIResourceSchemaClusterInformer,
-	apiExportInformer apisv1alpha1informers.APIExportClusterInformer,
 	createAPIDefinition CreateAPIDefinitionFunc,
 	allowedAPIfilter AllowedAPIfilterFunc,
 ) (*APIReconciler, error) {
@@ -64,11 +62,8 @@ func NewAPIReconciler(
 	c := &APIReconciler{
 		virtualWorkspaceName: virtualWorkspaceName,
 
-		apiBindingLister: apiBindingInformer.Lister(),
-
+		apiBindingLister:        apiBindingInformer.Lister(),
 		apiResourceSchemaLister: apiResourceSchemaInformer.Lister(),
-
-		apiExportLister: apiExportInformer.Lister(),
 
 		queue: queue,
 
@@ -79,10 +74,6 @@ func NewAPIReconciler(
 	}
 
 	logger := logging.WithReconciler(klog.Background(), ControllerName+virtualWorkspaceName)
-
-	indexers.AddIfNotPresentOrDie(apiExportInformer.Informer().GetIndexer(), cache.Indexers{
-		indexers.ByLogicalClusterPathAndName: indexers.IndexByLogicalClusterPathAndName,
-	})
 
 	apiBindingInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) { c.enqueueApiBinding(obj, logger, "") },
@@ -106,12 +97,8 @@ func NewAPIReconciler(
 type APIReconciler struct {
 	virtualWorkspaceName string
 
-	apiBindingLister apisv1alpha1listers.APIBindingClusterLister
-
+	apiBindingLister        apisv1alpha1listers.APIBindingClusterLister
 	apiResourceSchemaLister apisv1alpha1listers.APIResourceSchemaClusterLister
-
-	apiExportLister  apisv1alpha1listers.APIExportClusterLister
-	apiExportIndexer cache.Indexer
 
 	queue workqueue.RateLimitingInterface
 
@@ -200,6 +187,14 @@ func (c *APIReconciler) process(ctx context.Context, key string) error {
 	}
 
 	// TODO: think again at this
+	// The apiDomainKey is used as a key to store APIDefinitions for a specific view,
+	// for now, we assume that our view is 1:1 with a workload cluster.
+	// NOTE: current implementation does not work because sometimes we get
+	// the path and sometime the key for a cluster, and as consequence we store APIDefinitions
+	// under different keys.
+	// We temporarily fixed this by reading the path from the apiBinding, but this does not works
+	// on deletion, but this should be re-evaluated after all the changes.
+
 	apiDomainKey := dynamiccontext.APIDomainKey(clusterName.String())
 
 	apiBinding, err := c.apiBindingLister.Cluster(clusterName).Get(apiBindingName)

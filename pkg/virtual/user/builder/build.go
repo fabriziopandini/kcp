@@ -22,7 +22,6 @@ import (
 	kcpdynamic "github.com/kcp-dev/client-go/dynamic"
 	kcpkubernetesclientset "github.com/kcp-dev/client-go/kubernetes"
 
-	workloadv1alpha1 "github.com/kcp-dev/kcp/pkg/apis/workload/v1alpha1"
 	kcpinformers "github.com/kcp-dev/kcp/pkg/client/informers/externalversions"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/forwardingregistry"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/rootapiserver"
@@ -45,23 +44,8 @@ func BuildVirtualWorkspace(
 		rootPathPrefix += "/"
 	}
 
-	// Setup the APIReconciler indexes to share between both virtualworkspaces.
-
-	/*
-		FP: Old code, I don't know if we still need those
-		indexers.AddIfNotPresentOrDie(
-			cachedKCPInformers.Workload().V1alpha1().SyncTargets().Informer().GetIndexer(),
-			cache.Indexers{
-				apireconciler.IndexSyncTargetsByExport: apireconciler.IndexSyncTargetsByExports,
-			},
-		)
-		indexers.AddIfNotPresentOrDie(
-			cachedKCPInformers.Apis().V1alpha1().APIExports().Informer().GetIndexer(),
-			cache.Indexers{
-				apireconciler.IndexAPIExportsByAPIResourceSchema: apireconciler.IndexAPIExportsByAPIResourceSchemas,
-			},
-		)
-	*/
+	// the template provider builds a DynamicVirtualWorspace, which handle a variable list of APIs
+	// which is changed dynamically di the apireconciler controller
 
 	provider := templateProvider{
 		kubeClusterClient:    kubeClusterClient,
@@ -71,50 +55,14 @@ func BuildVirtualWorkspace(
 	}
 
 	return []rootapiserver.NamedVirtualWorkspace{
-		/*
-			FP: Old code. only for reference
-			{
-				Name: SyncerVirtualWorkspaceName,
-				VirtualWorkspace: provider.newTemplate(templateParameters{
-					virtualWorkspaceName:  SyncerVirtualWorkspaceName,
-					filteredResourceState: workloadv1alpha1.ResourceStateSync,
-					restProviderBuilder:   NewSyncerRestProvider,
-					allowedAPIFilter: func(apiGroupResource schema.GroupResource) bool {
-						// Don't expose Endpoints or Pods via the Syncer VirtualWorkspace.
-						if apiGroupResource.Group == "" && (apiGroupResource.Resource == "pods" || apiGroupResource.Resource == "endpoints") {
-							return false
-						}
-						return true
-					},
-					transformer: &transformations.SyncerResourceTransformer{
-						TransformationProvider:   &transformations.SpecDiffTransformation{},
-						SummarizingRulesProvider: &transformations.DefaultSummarizingRules{},
-					},
-					storageWrapperBuilder: forwardingregistry.WithStaticLabelSelector,
-				}).buildVirtualWorkspace(),
-			},
-			{
-				Name: UpsyncerVirtualWorkspaceName,
-				VirtualWorkspace: provider.newTemplate(templateParameters{
-					virtualWorkspaceName:  UpsyncerVirtualWorkspaceName,
-					filteredResourceState: workloadv1alpha1.ResourceStateUpsync,
-					restProviderBuilder:   NewUpSyncerRestProvider,
-					allowedAPIFilter: func(apiGroupResource schema.GroupResource) bool {
-						// Only allow persistentvolumes and Pods to be Upsynced.
-						return apiGroupResource.Group == "" && (apiGroupResource.Resource == "persistentvolumes" || apiGroupResource.Resource == "pods")
-					},
-					transformer:           &upsyncer.UpsyncerResourceTransformer{},
-					storageWrapperBuilder: upsyncer.WithStaticLabelSelectorAndInWriteCallsCheck,
-				}).buildVirtualWorkspace(),
-			},
-		*/
 		{
 			Name: UserVirtualWorkspaceName,
 			VirtualWorkspace: provider.newTemplate(templateParameters{
-				virtualWorkspaceName:  UserVirtualWorkspaceName,
-				filteredResourceState: workloadv1alpha1.ResourceStateSync,
-				restProviderBuilder:   NewSyncerRestProvider,
+				virtualWorkspaceName: UserVirtualWorkspaceName,
+				restProviderBuilder:  NewUserRestProvider, // TODO: investigate this better
 				allowedAPIFilter: func(apiGroupResource schema.GroupResource) bool {
+					// This function is used by the apireconciler controller to drop apiGroupResource we do not want to be served by the virtual workspace.
+
 					// Don't expose Endpoints or Pods via the Syncer VirtualWorkspace.
 					if apiGroupResource.Group == "" && (apiGroupResource.Resource == "pods" || apiGroupResource.Resource == "endpoints") {
 						return false
@@ -127,7 +75,7 @@ func BuildVirtualWorkspace(
 					return true
 				},
 				transformer:           nil,
-				storageWrapperBuilder: forwardingregistry.WithStaticLabelSelector,
+				storageWrapperBuilder: forwardingregistry.WithStaticLabelSelector, // TODO: investigate this better
 			}).buildVirtualWorkspace(),
 		},
 	}

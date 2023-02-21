@@ -38,7 +38,7 @@ type Options struct {
 	Syncer                 *synceroptions.Syncer
 	APIExport              *apiexportoptions.APIExport
 	InitializingWorkspaces *initializingworkspacesoptions.InitializingWorkspaces
-	User                   *useroptions.Syncer
+	User                   *useroptions.User
 }
 
 func NewOptions() *Options {

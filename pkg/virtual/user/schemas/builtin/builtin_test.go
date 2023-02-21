@@ -25,5 +25,5 @@ import (
 )
 
 func TestInit(t *testing.T) {
-	require.Equal(t, len(syncerInternalAPIs), len(SyncerSchemas))
+	require.Equal(t, len(syncerInternalAPIs), len(UserSchemas))
 }

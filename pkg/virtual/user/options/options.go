@@ -28,19 +28,19 @@ import (
 	"github.com/kcp-dev/kcp/pkg/virtual/user/builder"
 )
 
-type Syncer struct{}
+type User struct{}
 
-func New() *Syncer {
-	return &Syncer{}
+func New() *User {
+	return &User{}
 }
 
-func (o *Syncer) AddFlags(flags *pflag.FlagSet, prefix string) {
+func (o *User) AddFlags(flags *pflag.FlagSet, prefix string) {
 	if o == nil {
 		return
 	}
 }
 
-func (o *Syncer) Validate(flagPrefix string) []error {
+func (o *User) Validate(flagPrefix string) []error {
 	if o == nil {
 		return nil
 	}
@@ -49,7 +49,7 @@ func (o *Syncer) Validate(flagPrefix string) []error {
 	return errs
 }
 
-func (o *Syncer) NewVirtualWorkspaces(
+func (o *User) NewVirtualWorkspaces(
 	rootPathPrefix string,
 	config *rest.Config,
 	cachedKCPInformers kcpinformers.SharedInformerFactory,
