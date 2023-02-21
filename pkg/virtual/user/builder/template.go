@@ -280,22 +280,18 @@ func (t *template) authorize(ctx context.Context, a authorizer.Attributes) (auth
 		return authz.Authorize(ctx, SARAttributes)
 
 	*/
-	cluster := genericapirequest.ClusterFrom(ctx)
+	//  cluster := genericapirequest.ClusterFrom(ctx)
 
-	authz, err := delegated.NewDelegatedAuthorizer(cluster.Name, t.kubeClusterClient, delegated.Options{})
+	apiDomainKey := dynamiccontext.APIDomainKeyFrom(ctx)
+
+	authz, err := delegated.NewDelegatedAuthorizer(logicalcluster.Name(apiDomainKey), t.kubeClusterClient, delegated.Options{})
 	if err != nil {
 		return authorizer.DecisionNoOpinion, "Error", err
 	}
-	SARAttributes := authorizer.AttributesRecord{
-		User:            a.GetUser(),
-		Verb:            a.GetVerb(),
-		Name:            a.GetName(),
-		APIGroup:        a.GetAPIGroup(),
-		APIVersion:      a.GetAPIVersion(),
-		Resource:        a.GetNamespace(),
-		ResourceRequest: a.IsResourceRequest(),
-	}
-	return authz.Authorize(ctx, SARAttributes)
+	SARAttributes := a
+
+	authorized, reason, err := authz.Authorize(ctx, SARAttributes)
+	return authorized, reason, err
 }
 
 func (t *template) bootstrapManagement(mainConfig genericapiserver.CompletedConfig) (apidefinition.APIDefinitionSetGetter, error) {
