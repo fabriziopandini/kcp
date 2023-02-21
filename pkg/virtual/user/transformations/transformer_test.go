@@ -44,7 +44,7 @@ import (
 	"github.com/kcp-dev/kcp/pkg/client"
 	dynamiccontext "github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/context"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/transforming"
-	syncercontext "github.com/kcp-dev/kcp/pkg/virtual/syncer/context"
+	syncercontext "github.com/kcp-dev/kcp/pkg/virtual/user/context"
 )
 
 type mockedClusterClient struct {

@@ -19,16 +19,18 @@ package builder
 import (
 	"context"
 	"errors"
-	"fmt"
+	"github.com/kcp-dev/kcp/pkg/apis/core"
+	dynamiccontext "github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/context"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"strings"
+	"sync"
 
-	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
 	kcpdynamic "github.com/kcp-dev/client-go/dynamic"
 	kcpkubernetesclientset "github.com/kcp-dev/client-go/kubernetes"
 	"github.com/kcp-dev/logicalcluster/v3"
 
 	"k8s.io/apimachinery/pkg/labels"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	genericapiserver "k8s.io/apiserver/pkg/server"
@@ -43,11 +45,9 @@ import (
 	virtualworkspacesdynamic "github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/apidefinition"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/apiserver"
-	dynamiccontext "github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/context"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/forwardingregistry"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/transforming"
-	syncercontext "github.com/kcp-dev/kcp/pkg/virtual/syncer/context"
-	"github.com/kcp-dev/kcp/pkg/virtual/syncer/controllers/apireconciler"
+	"github.com/kcp-dev/kcp/pkg/virtual/user/controllers/apireconciler"
 )
 
 type templateProvider struct {
@@ -84,6 +84,93 @@ type template struct {
 }
 
 func (t *template) resolveRootPath(urlPath string, requestContext context.Context) (accepted bool, prefixToStrip string, completedContext context.Context) {
+	/*
+		FP: Old code. only for reference
+
+		select {
+		case <-t.readyCh:
+		default:
+			return
+		}
+
+		rootPathPrefix := t.rootPathPrefix + t.virtualWorkspaceName + "/"
+		completedContext = requestContext
+		if !strings.HasPrefix(urlPath, rootPathPrefix) {
+			return
+		}
+		withoutRootPathPrefix := strings.TrimPrefix(urlPath, rootPathPrefix)
+
+		// Incoming requests to this virtual workspace will look like:
+		//  /services/(up)syncer/root:org:ws/<sync-target-name>/<sync-target-uid>/clusters/-*-/api/v1/configmaps
+		//                      └───────────────────────┐
+		// Where the withoutRootPathPrefix starts here: ┘
+		parts := strings.SplitN(withoutRootPathPrefix, "/", 4)
+		if len(parts) < 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return
+		}
+		path := logicalcluster.NewPath(parts[0])
+		syncTargetName := parts[1]
+		syncTargetUID := parts[2]
+
+		clusterName, ok := path.Name()
+		if !ok {
+			return
+		}
+
+		apiDomainKey := dynamiccontext.APIDomainKey(kcpcache.ToClusterAwareKey(clusterName.String(), "", syncTargetName))
+
+		// In order to avoid conflicts with reusing deleted synctarget names, let's make sure that the synctarget name and synctarget UID match, if not,
+		// that likely means that a syncer is running with a stale synctarget that got deleted.
+		syncTarget, err := t.cachedKCPInformers.Workload().V1alpha1().SyncTargets().Cluster(clusterName).Lister().Get(syncTargetName)
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("failed to get synctarget %s|%s: %w", path, syncTargetName, err))
+			return
+		}
+		if string(syncTarget.UID) != syncTargetUID {
+			utilruntime.HandleError(fmt.Errorf("sync target UID mismatch: %s != %s", syncTarget.UID, syncTargetUID))
+			return
+		}
+
+		realPath := "/"
+		if len(parts) > 3 {
+			realPath += parts[3]
+		}
+
+		//  /services/(up)syncer/root:org:ws/<sync-target-name>/<sync-target-uid>/clusters/-*-/api/v1/configmaps
+		//                  ┌────────────────────────────────────────────────────┘
+		// We are now here: ┘
+		// Now, we parse out the logical cluster.
+		if !strings.HasPrefix(realPath, "/clusters/") {
+			return // don't accept
+		}
+
+		withoutClustersPrefix := strings.TrimPrefix(realPath, "/clusters/")
+		parts = strings.SplitN(withoutClustersPrefix, "/", 2)
+		reqPath := logicalcluster.NewPath(parts[0])
+		realPath = "/"
+		if len(parts) > 1 {
+			realPath += parts[1]
+		}
+		var cluster genericapirequest.Cluster
+		if reqPath == logicalcluster.Wildcard {
+			cluster.Wildcard = true
+		} else {
+			reqClusterName, ok := reqPath.Name()
+			if !ok {
+				return
+			}
+			cluster.Name = reqClusterName
+		}
+
+		syncTargetKey := workloadv1alpha1.ToSyncTargetKey(clusterName, syncTargetName)
+		completedContext = genericapirequest.WithCluster(requestContext, cluster)
+		completedContext = syncercontext.WithSyncTargetKey(completedContext, syncTargetKey)
+		completedContext = dynamiccontext.WithAPIDomainKey(completedContext, apiDomainKey)
+		prefixToStrip = strings.TrimSuffix(urlPath, realPath)
+		accepted = true
+		return
+	*/
+
 	select {
 	case <-t.readyCh:
 	default:
@@ -98,43 +185,27 @@ func (t *template) resolveRootPath(urlPath string, requestContext context.Contex
 	withoutRootPathPrefix := strings.TrimPrefix(urlPath, rootPathPrefix)
 
 	// Incoming requests to this virtual workspace will look like:
-	//  /services/(up)syncer/root:org:ws/<sync-target-name>/<sync-target-uid>/clusters/*/api/v1/configmaps
-	//                      └───────────────────────┐
+	//  /services/user/root:org:ws/clusters/*/api/v1/configmaps
+	//                └─────────────────────────────┐
 	// Where the withoutRootPathPrefix starts here: ┘
-	parts := strings.SplitN(withoutRootPathPrefix, "/", 4)
-	if len(parts) < 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+	parts := strings.SplitN(withoutRootPathPrefix, "/", 2)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return
 	}
 	path := logicalcluster.NewPath(parts[0])
-	syncTargetName := parts[1]
-	syncTargetUID := parts[2]
 
 	clusterName, ok := path.Name()
 	if !ok {
 		return
 	}
 
-	apiDomainKey := dynamiccontext.APIDomainKey(kcpcache.ToClusterAwareKey(clusterName.String(), "", syncTargetName))
-
-	// In order to avoid conflicts with reusing deleted synctarget names, let's make sure that the synctarget name and synctarget UID match, if not,
-	// that likely means that a syncer is running with a stale synctarget that got deleted.
-	syncTarget, err := t.cachedKCPInformers.Workload().V1alpha1().SyncTargets().Cluster(clusterName).Lister().Get(syncTargetName)
-	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("failed to get synctarget %s|%s: %w", path, syncTargetName, err))
-		return
-	}
-	if string(syncTarget.UID) != syncTargetUID {
-		utilruntime.HandleError(fmt.Errorf("sync target UID mismatch: %s != %s", syncTarget.UID, syncTargetUID))
-		return
-	}
-
 	realPath := "/"
-	if len(parts) > 3 {
-		realPath += parts[3]
+	if len(parts) > 1 {
+		realPath += parts[1]
 	}
 
-	//  /services/(up)syncer/root:org:ws/<sync-target-name>/<sync-target-uid>/clusters/*/api/v1/configmaps
-	//                  ┌────────────────────────────────────────────────────┘
+	//  /services/user/root:org:ws/clusters/*/api/v1/configmaps
+	//                  ┌─────────┘
 	// We are now here: ┘
 	// Now, we parse out the logical cluster.
 	if !strings.HasPrefix(realPath, "/clusters/") {
@@ -159,10 +230,16 @@ func (t *template) resolveRootPath(urlPath string, requestContext context.Contex
 		cluster.Name = reqClusterName
 	}
 
-	syncTargetKey := workloadv1alpha1.ToSyncTargetKey(clusterName, syncTargetName)
+	if clusterName != cluster.Name {
+
+	}
+
+	apiDomainKey := dynamiccontext.APIDomainKey(clusterName.String())
+
+	// NOTE: those info can be used only in the lifecyle of this request (e.g authorize), not in the reconciler
 	completedContext = genericapirequest.WithCluster(requestContext, cluster)
-	completedContext = syncercontext.WithSyncTargetKey(completedContext, syncTargetKey)
 	completedContext = dynamiccontext.WithAPIDomainKey(completedContext, apiDomainKey)
+
 	prefixToStrip = strings.TrimSuffix(urlPath, realPath)
 	accepted = true
 	return
@@ -178,24 +255,45 @@ func (t *template) ready() error {
 }
 
 func (t *template) authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
-	syncTargetKey := dynamiccontext.APIDomainKeyFrom(ctx)
-	negotiationWorkspaceName, _, syncTargetName, err := kcpcache.SplitMetaClusterNamespaceKey(string(syncTargetKey))
-	if err != nil {
-		return authorizer.DecisionNoOpinion, "", err
-	}
+	/*
+		FP: Old code. only for reference
 
-	authz, err := delegated.NewDelegatedAuthorizer(negotiationWorkspaceName, t.kubeClusterClient, delegated.Options{})
+		syncTargetKey := dynamiccontext.APIDomainKeyFrom(ctx)
+		negotiationWorkspaceName, _, syncTargetName, err := kcpcache.SplitMetaClusterNamespaceKey(string(syncTargetKey))
+		if err != nil {
+			return authorizer.DecisionNoOpinion, "", err
+		}
+
+		authz, err := delegated.NewDelegatedAuthorizer(negotiationWorkspaceName, t.kubeClusterClient, delegated.Options{})
+		if err != nil {
+			return authorizer.DecisionNoOpinion, "Error", err
+		}
+		SARAttributes := authorizer.AttributesRecord{
+			User:            a.GetUser(),
+			Verb:            "sync",
+			Name:            syncTargetName,
+			APIGroup:        workloadv1alpha1.SchemeGroupVersion.Group,
+			APIVersion:      workloadv1alpha1.SchemeGroupVersion.Version,
+			Resource:        "synctargets",
+			ResourceRequest: true,
+		}
+		return authz.Authorize(ctx, SARAttributes)
+
+	*/
+	cluster := genericapirequest.ClusterFrom(ctx)
+
+	authz, err := delegated.NewDelegatedAuthorizer(cluster.Name, t.kubeClusterClient, delegated.Options{})
 	if err != nil {
 		return authorizer.DecisionNoOpinion, "Error", err
 	}
 	SARAttributes := authorizer.AttributesRecord{
 		User:            a.GetUser(),
-		Verb:            "sync",
-		Name:            syncTargetName,
-		APIGroup:        workloadv1alpha1.SchemeGroupVersion.Group,
-		APIVersion:      workloadv1alpha1.SchemeGroupVersion.Version,
-		Resource:        "synctargets",
-		ResourceRequest: true,
+		Verb:            a.GetVerb(),
+		Name:            a.GetName(),
+		APIGroup:        a.GetAPIGroup(),
+		APIVersion:      a.GetAPIVersion(),
+		Resource:        a.GetNamespace(),
+		ResourceRequest: a.IsResourceRequest(),
 	}
 	return authz.Authorize(ctx, SARAttributes)
 }
@@ -203,24 +301,18 @@ func (t *template) authorize(ctx context.Context, a authorizer.Attributes) (auth
 func (t *template) bootstrapManagement(mainConfig genericapiserver.CompletedConfig) (apidefinition.APIDefinitionSetGetter, error) {
 	apiReconciler, err := apireconciler.NewAPIReconciler(
 		t.virtualWorkspaceName,
-		t.cachedKCPInformers.Workload().V1alpha1().SyncTargets(),
+		t.cachedKCPInformers.Apis().V1alpha1().APIBindings(),
 		t.cachedKCPInformers.Apis().V1alpha1().APIResourceSchemas(),
 		t.cachedKCPInformers.Apis().V1alpha1().APIExports(),
-		func(syncTargetClusterName logicalcluster.Name, syncTargetName string, apiResourceSchema *apisv1alpha1.APIResourceSchema, version string, apiExportIdentityHash string) (apidefinition.APIDefinition, error) {
-			syncTargetKey := workloadv1alpha1.ToSyncTargetKey(syncTargetClusterName, syncTargetName)
-			requirements, selectable := labels.SelectorFromSet(map[string]string{
-				workloadv1alpha1.ClusterResourceStateLabelPrefix + syncTargetKey: string(t.filteredResourceState),
-			}).Requirements()
-			if !selectable {
-				return nil, fmt.Errorf("unable to build requirements for synctargetkey %s and resource state %s", syncTargetKey, t.filteredResourceState)
-			}
+		func(apiBindingWorkspace logicalcluster.Name, apiBindingName string, apiResourceSchema *apisv1alpha1.APIResourceSchema, version string, identityHash string) (apidefinition.APIDefinition, error) {
+			requirements, _ := labels.Everything().Requirements()
 			storageWrapper := t.storageWrapperBuilder(requirements)
 			transformingClient := t.dynamicClusterClient
 			if t.transformer != nil {
 				transformingClient = transforming.WithResourceTransformer(t.dynamicClusterClient, t.transformer)
 			}
 			ctx, cancelFn := context.WithCancel(context.Background())
-			storageBuilder := t.restProviderBuilder(ctx, transformingClient, apiExportIdentityHash, storageWrapper)
+			storageBuilder := t.restProviderBuilder(ctx, transformingClient, identityHash, storageWrapper)
 			def, err := apiserver.CreateServingInfoFor(mainConfig, apiResourceSchema, version, storageBuilder)
 			if err != nil {
 				cancelFn()
@@ -287,4 +379,97 @@ func goContext(parent genericapiserver.PostStartHookContext) context.Context {
 		cancel()
 	}(parent.StopCh)
 	return ctx
+}
+
+func (t *template) fakeBootstrapManagement(mainConfig genericapiserver.CompletedConfig) (apidefinition.APIDefinitionSetGetter, error) {
+	thing := &Thing{
+		mutex:   sync.RWMutex{},
+		apiSets: map[dynamiccontext.APIDomainKey]apidefinition.APIDefinitionSet{},
+	}
+
+	// I don't know if we need a storage wrapper at all, but for now I'm trying to use the one used by the syncer with
+	// a label selector that selects everything (instead of selecting only things managed by the syncer)
+	requirements, _ := labels.Everything().Requirements()
+	storageWrapper := t.storageWrapperBuilder(requirements)
+
+	// I don't think we need transformations so re-using dynamic cluster as it is.
+	transformingClient := t.dynamicClusterClient
+
+	apiBinding, err := t.cachedKCPInformers.Apis().V1alpha1().APIBindings().Cluster(core.RootCluster).Lister().Get("tenancy.kcp.io")
+	if err != nil {
+
+	}
+
+	newSet := apidefinition.APIDefinitionSet{}
+	for _, r := range apiBinding.Status.BoundResources {
+		apiExportIdentityHash := r.Schema.IdentityHash
+
+		apiResourceSchema, err := t.cachedKCPInformers.Apis().V1alpha1().APIResourceSchemas().Cluster(core.RootCluster).Lister().Get(r.Schema.Name)
+		if err != nil {
+
+		}
+
+		ctx, cancelFn := context.WithCancel(context.Background())
+		storageBuilder := t.restProviderBuilder(ctx, transformingClient, apiExportIdentityHash, storageWrapper)
+		for _, version := range apiResourceSchema.Spec.Versions {
+			if !version.Served {
+				continue
+			}
+
+			gvr := schema.GroupVersionResource{
+				Group:    apiResourceSchema.Spec.Group,
+				Version:  version.Name,
+				Resource: apiResourceSchema.Spec.Names.Plural,
+			}
+
+			def, err := apiserver.CreateServingInfoFor(mainConfig, apiResourceSchema, version.Name, storageBuilder)
+			if err != nil {
+				cancelFn()
+				return nil, err
+			}
+			apiDefinition := &apiDefinitionWithCancel{
+				APIDefinition: def,
+				cancelFn:      cancelFn,
+			}
+
+			newSet[gvr] = apiResourceSchemaApiDefinition{
+				APIDefinition: apiDefinition,
+				UID:           apiResourceSchema.UID,
+				IdentityHash:  apiExportIdentityHash,
+			}
+		}
+	}
+
+	thing.mutex.Lock()
+	defer thing.mutex.Unlock()
+	thing.apiSets["root"] = newSet
+
+	return thing, nil
+}
+
+type apiResourceSchemaApiDefinition struct {
+	apidefinition.APIDefinition
+
+	UID          types.UID
+	IdentityHash string
+}
+
+type Thing struct {
+	mutex   sync.RWMutex // protects the map, not the values!
+	apiSets map[dynamiccontext.APIDomainKey]apidefinition.APIDefinitionSet
+}
+
+func (c *Thing) GetAPIDefinitionSet(_ context.Context, key dynamiccontext.APIDomainKey) (apidefinition.APIDefinitionSet, bool, error) {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	apiSet, ok := c.apiSets[key]
+	return apiSet, ok, nil
+}
+
+func (c *Thing) removeAPIDefinitionSet(key dynamiccontext.APIDomainKey) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	delete(c.apiSets, key)
 }

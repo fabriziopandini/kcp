@@ -36,11 +36,8 @@ import (
 	"k8s.io/klog/v2"
 
 	apisv1alpha1 "github.com/kcp-dev/kcp/pkg/apis/apis/v1alpha1"
-	workloadv1alpha1 "github.com/kcp-dev/kcp/pkg/apis/workload/v1alpha1"
 	apisv1alpha1informers "github.com/kcp-dev/kcp/pkg/client/informers/externalversions/apis/v1alpha1"
-	workloadv1alpha1informers "github.com/kcp-dev/kcp/pkg/client/informers/externalversions/workload/v1alpha1"
 	apisv1alpha1listers "github.com/kcp-dev/kcp/pkg/client/listers/apis/v1alpha1"
-	workloadv1alpha1listers "github.com/kcp-dev/kcp/pkg/client/listers/workload/v1alpha1"
 	"github.com/kcp-dev/kcp/pkg/indexers"
 	"github.com/kcp-dev/kcp/pkg/logging"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/apidefinition"
@@ -48,17 +45,15 @@ import (
 )
 
 const (
-	ControllerName                     = "kcp-virtual-syncer-api-reconciler-"
-	IndexSyncTargetsByExport           = ControllerName + "ByExport"
-	IndexAPIExportsByAPIResourceSchema = ControllerName + "ByAPIResourceSchema"
+	ControllerName = "kcp-virtual-syncer-api-reconciler-"
 )
 
-type CreateAPIDefinitionFunc func(syncTargetWorkspace logicalcluster.Name, syncTargetName string, apiResourceSchema *apisv1alpha1.APIResourceSchema, version string, identityHash string) (apidefinition.APIDefinition, error)
+type CreateAPIDefinitionFunc func(apiBindingWorkspace logicalcluster.Name, apiBindingName string, apiResourceSchema *apisv1alpha1.APIResourceSchema, version string, identityHash string) (apidefinition.APIDefinition, error)
 type AllowedAPIfilterFunc func(apiGroupResource schema.GroupResource) bool
 
 func NewAPIReconciler(
 	virtualWorkspaceName string,
-	syncTargetInformer workloadv1alpha1informers.SyncTargetClusterInformer,
+	apiBindingInformer apisv1alpha1informers.APIBindingClusterInformer,
 	apiResourceSchemaInformer apisv1alpha1informers.APIResourceSchemaClusterInformer,
 	apiExportInformer apisv1alpha1informers.APIExportClusterInformer,
 	createAPIDefinition CreateAPIDefinitionFunc,
@@ -69,13 +64,11 @@ func NewAPIReconciler(
 	c := &APIReconciler{
 		virtualWorkspaceName: virtualWorkspaceName,
 
-		syncTargetLister:  syncTargetInformer.Lister(),
-		syncTargetIndexer: syncTargetInformer.Informer().GetIndexer(),
+		apiBindingLister: apiBindingInformer.Lister(),
 
 		apiResourceSchemaLister: apiResourceSchemaInformer.Lister(),
 
-		apiExportLister:  apiExportInformer.Lister(),
-		apiExportIndexer: apiExportInformer.Informer().GetIndexer(),
+		apiExportLister: apiExportInformer.Lister(),
 
 		queue: queue,
 
@@ -91,29 +84,18 @@ func NewAPIReconciler(
 		indexers.ByLogicalClusterPathAndName: indexers.IndexByLogicalClusterPathAndName,
 	})
 
-	syncTargetInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) { c.enqueueSyncTarget(obj, logger, "") },
+	apiBindingInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) { c.enqueueApiBinding(obj, logger, "") },
 		UpdateFunc: func(old, obj interface{}) {
-			oldCluster := old.(*workloadv1alpha1.SyncTarget)
-			newCluster := obj.(*workloadv1alpha1.SyncTarget)
+			oldBinding := old.(*apisv1alpha1.APIBinding)
+			newBinding := obj.(*apisv1alpha1.APIBinding)
 
 			// only enqueue when syncedResource is changed.
-			if !equality.Semantic.DeepEqual(oldCluster.Status.SyncedResources, newCluster.Status.SyncedResources) {
-				c.enqueueSyncTarget(obj, logger, "")
+			if !equality.Semantic.DeepEqual(oldBinding.Status.BoundResources, newBinding.Status.BoundResources) {
+				c.enqueueApiBinding(obj, logger, "")
 			}
 		},
-		DeleteFunc: func(obj interface{}) { c.enqueueSyncTarget(obj, logger, "") },
-	})
-
-	apiResourceSchemaInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.enqueueAPIResourceSchema(obj, logger) },
-		DeleteFunc: func(obj interface{}) { c.enqueueAPIResourceSchema(obj, logger) },
-	})
-
-	apiExportInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { c.enqueueAPIExport(obj, logger, "") },
-		UpdateFunc: func(_, obj interface{}) { c.enqueueAPIExport(obj, logger, "") },
-		DeleteFunc: func(obj interface{}) { c.enqueueAPIExport(obj, logger, "") },
+		DeleteFunc: func(obj interface{}) { c.enqueueApiBinding(obj, logger, "") },
 	})
 
 	return c, nil
@@ -124,8 +106,7 @@ func NewAPIReconciler(
 type APIReconciler struct {
 	virtualWorkspaceName string
 
-	syncTargetLister  workloadv1alpha1listers.SyncTargetClusterLister
-	syncTargetIndexer cache.Indexer
+	apiBindingLister apisv1alpha1listers.APIBindingClusterLister
 
 	apiResourceSchemaLister apisv1alpha1listers.APIResourceSchemaClusterLister
 
@@ -141,54 +122,15 @@ type APIReconciler struct {
 	apiSets map[dynamiccontext.APIDomainKey]apidefinition.APIDefinitionSet
 }
 
-func (c *APIReconciler) enqueueSyncTarget(obj interface{}, logger logr.Logger, logSuffix string) {
+func (c *APIReconciler) enqueueApiBinding(obj interface{}, logger logr.Logger, logSuffix string) {
 	key, err := kcpcache.DeletionHandlingMetaClusterNamespaceKeyFunc(obj)
 	if err != nil {
 		runtime.HandleError(err)
 		return
 	}
 
-	logging.WithQueueKey(logger, key).V(2).Info(fmt.Sprintf("queueing SyncTarget%s", logSuffix))
+	logging.WithQueueKey(logger, key).V(2).Info(fmt.Sprintf("queueing ApiBinding%s", logSuffix))
 	c.queue.Add(key)
-}
-
-func (c *APIReconciler) enqueueAPIExport(obj interface{}, logger logr.Logger, logSuffix string) {
-	key, err := kcpcache.DeletionHandlingMetaClusterNamespaceKeyFunc(obj)
-	if err != nil {
-		runtime.HandleError(err)
-		return
-	}
-
-	syncTargets, err := indexers.ByIndex[*workloadv1alpha1.SyncTarget](c.syncTargetIndexer, IndexSyncTargetsByExport, key)
-	if err != nil {
-		runtime.HandleError(err)
-		return
-	}
-
-	for _, syncTarget := range syncTargets {
-		logger := logging.WithObject(logger, syncTarget)
-		c.enqueueSyncTarget(syncTarget, logger, " because of APIExport")
-	}
-}
-
-// enqueueAPIResourceSchema maps an APIResourceSchema to APIExports for enqueuing.
-func (c *APIReconciler) enqueueAPIResourceSchema(obj interface{}, logger logr.Logger) {
-	key, err := kcpcache.DeletionHandlingMetaClusterNamespaceKeyFunc(obj)
-	if err != nil {
-		runtime.HandleError(err)
-		return
-	}
-
-	apiExports, err := indexers.ByIndex[*apisv1alpha1.APIExport](c.apiExportIndexer, IndexAPIExportsByAPIResourceSchema, key)
-	if err != nil {
-		runtime.HandleError(err)
-		return
-	}
-
-	for _, apiExport := range apiExports {
-		logger := logging.WithObject(logger, apiExport)
-		c.enqueueAPIExport(apiExport, logger, " because of APIResourceSchema")
-	}
 }
 
 func (c *APIReconciler) startWorker(ctx context.Context) {
@@ -248,17 +190,19 @@ func (c *APIReconciler) processNextWorkItem(ctx context.Context) bool {
 }
 
 func (c *APIReconciler) process(ctx context.Context, key string) error {
-	apiDomainKey := dynamiccontext.APIDomainKey(key)
-
 	logger := logging.WithQueueKey(klog.FromContext(ctx), key)
 	ctx = klog.NewContext(ctx, logger)
 
-	clusterName, _, syncTargetName, err := kcpcache.SplitMetaClusterNamespaceKey(key)
+	clusterName, _, apiBindingName, err := kcpcache.SplitMetaClusterNamespaceKey(key)
 	if err != nil {
 		runtime.HandleError(err)
 		return nil
 	}
-	syncTarget, err := c.syncTargetLister.Cluster(clusterName).Get(syncTargetName)
+
+	// TODO: think again at this
+	apiDomainKey := dynamiccontext.APIDomainKey(clusterName.String())
+
+	apiBinding, err := c.apiBindingLister.Cluster(clusterName).Get(apiBindingName)
 	if apierrors.IsNotFound(err) {
 		c.removeAPIDefinitionSet(apiDomainKey)
 		return nil
@@ -267,7 +211,8 @@ func (c *APIReconciler) process(ctx context.Context, key string) error {
 		return err
 	}
 
-	return c.reconcile(ctx, apiDomainKey, syncTarget)
+	apiDomainKey = dynamiccontext.APIDomainKey(logicalcluster.From(apiBinding))
+	return c.reconcile(ctx, apiDomainKey, apiBinding)
 }
 
 func (c *APIReconciler) GetAPIDefinitionSet(_ context.Context, key dynamiccontext.APIDomainKey) (apidefinition.APIDefinitionSet, bool, error) {

@@ -19,7 +19,7 @@ package apireconciler
 import (
 	"context"
 	"fmt"
-
+	syncerbuiltin "github.com/kcp-dev/kcp/pkg/virtual/user/schemas/builtin"
 	"github.com/kcp-dev/logicalcluster/v3"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,44 +29,44 @@ import (
 	"k8s.io/klog/v2"
 
 	apisv1alpha1 "github.com/kcp-dev/kcp/pkg/apis/apis/v1alpha1"
-	workloadv1alpha1 "github.com/kcp-dev/kcp/pkg/apis/workload/v1alpha1"
-	"github.com/kcp-dev/kcp/pkg/indexers"
-	"github.com/kcp-dev/kcp/pkg/logging"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/apidefinition"
 	dynamiccontext "github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/context"
-	syncerbuiltin "github.com/kcp-dev/kcp/pkg/virtual/syncer/schemas/builtin"
 )
 
-func (c *APIReconciler) reconcile(ctx context.Context, apiDomainKey dynamiccontext.APIDomainKey, syncTarget *workloadv1alpha1.SyncTarget) error {
+func (c *APIReconciler) reconcile(ctx context.Context, apiDomainKey dynamiccontext.APIDomainKey, apiBinding *apisv1alpha1.APIBinding) error {
 	c.mutex.RLock()
-	oldSet := c.apiSets[apiDomainKey]
+	newSet := c.apiSets[apiDomainKey]
+	if newSet == nil {
+		newSet = apidefinition.APIDefinitionSet{}
+	}
 	c.mutex.RUnlock()
 
 	logger := klog.FromContext(ctx)
 
 	// collect APIResourceSchemas by syncTarget.
-	apiResourceSchemas, schemaIdentites, err := c.getAllAcceptedResourceSchemas(ctx, syncTarget)
+	apiResourceSchemas, schemaIdentites, err := c.getAllAcceptedResourceSchemas(ctx, apiBinding)
 	if err != nil {
 		return err
 	}
 
-	// add built-in apiResourceSchema
-	for _, apiResourceSchema := range syncerbuiltin.SyncerSchemas {
-		shallow := *apiResourceSchema
-		if shallow.Annotations == nil {
-			shallow.Annotations = make(map[string]string)
+	if len(newSet) == 0 {
+		// add built-in apiResourceSchema
+		for _, apiResourceSchema := range syncerbuiltin.SyncerSchemas {
+			shallow := *apiResourceSchema
+			if shallow.Annotations == nil {
+				shallow.Annotations = make(map[string]string)
+			}
+			shallow.Annotations[logicalcluster.AnnotationKey] = logicalcluster.From(apiBinding).String()
+			apiResourceSchemas[schema.GroupResource{
+				Group:    apiResourceSchema.Spec.Group,
+				Resource: apiResourceSchema.Spec.Names.Plural,
+			}] = &shallow
 		}
-		shallow.Annotations[logicalcluster.AnnotationKey] = logicalcluster.From(syncTarget).String()
-		apiResourceSchemas[schema.GroupResource{
-			Group:    apiResourceSchema.Spec.Group,
-			Resource: apiResourceSchema.Spec.Names.Plural,
-		}] = &shallow
 	}
 
 	// reconcile APIs for APIResourceSchemas
-	newSet := apidefinition.APIDefinitionSet{}
 	newGVRs := []string{}
-	preservedGVR := []string{}
+	// preservedGVR := []string{}
 	for gr, apiResourceSchema := range apiResourceSchemas {
 		if c.allowedAPIfilter != nil && !c.allowedAPIfilter(gr) {
 			continue
@@ -83,24 +83,24 @@ func (c *APIReconciler) reconcile(ctx context.Context, apiDomainKey dynamicconte
 				Resource: gr.Resource,
 			}
 
-			oldDef, found := oldSet[gvr]
-			if found {
-				oldDef := oldDef.(apiResourceSchemaApiDefinition)
-				if oldDef.UID != apiResourceSchema.UID {
-					logging.WithObject(logger, apiResourceSchema).V(4).Info("APIResourceSchema UID has changed:", "oldUID", oldDef.UID, "newUID", apiResourceSchema.UID)
-				}
-				if oldDef.IdentityHash != schemaIdentites[gr] {
-					logging.WithObject(logger, apiResourceSchema).V(4).Info("APIResourceSchema identity hash has changed", "oldIdentityHash", oldDef.IdentityHash, "newIdentityHash", schemaIdentites[gr])
-				}
-				if oldDef.UID == apiResourceSchema.UID && oldDef.IdentityHash == schemaIdentites[gr] {
-					// this is the same schema and identity as before. no need to update.
-					newSet[gvr] = oldDef
-					preservedGVR = append(preservedGVR, gvrString(gvr))
-					continue
-				}
-			}
+			// oldDef, found := oldSet[gvr]
+			// if found {
+			// 	oldDef := oldDef.(apiResourceSchemaApiDefinition)
+			// 	if oldDef.UID != apiResourceSchema.UID {
+			// 		logging.WithObject(logger, apiResourceSchema).V(4).Info("APIResourceSchema UID has changed:", "oldUID", oldDef.UID, "newUID", apiResourceSchema.UID)
+			// 	}
+			// 	if oldDef.IdentityHash != schemaIdentites[gr] {
+			// 		logging.WithObject(logger, apiResourceSchema).V(4).Info("APIResourceSchema identity hash has changed", "oldIdentityHash", oldDef.IdentityHash, "newIdentityHash", schemaIdentites[gr])
+			// 	}
+			// 	if oldDef.UID == apiResourceSchema.UID && oldDef.IdentityHash == schemaIdentites[gr] {
+			// 		// this is the same schema and identity as before. no need to update.
+			// 		newSet[gvr] = oldDef
+			// 		preservedGVR = append(preservedGVR, gvrString(gvr))
+			// 		continue
+			// 	}
+			// }
 
-			apiDefinition, err := c.createAPIDefinition(logicalcluster.From(syncTarget), syncTarget.Name, apiResourceSchema, version.Name, schemaIdentites[gr])
+			apiDefinition, err := c.createAPIDefinition(logicalcluster.From(apiBinding), apiBinding.Name, apiResourceSchema, version.Name, schemaIdentites[gr])
 			if err != nil {
 				logger.WithValues("gvr", gvr).Error(err, "failed to create API definition")
 				continue
@@ -115,16 +115,16 @@ func (c *APIReconciler) reconcile(ctx context.Context, apiDomainKey dynamicconte
 		}
 	}
 
-	// cleanup old definitions
-	removedGVRs := []string{}
-	for gvr, oldDef := range oldSet {
-		if _, found := newSet[gvr]; !found || oldDef != newSet[gvr] {
-			removedGVRs = append(removedGVRs, gvrString(gvr))
-			oldDef.TearDown()
-		}
-	}
+	// // cleanup old definitions
+	// removedGVRs := []string{}
+	// for gvr, oldDef := range oldSet {
+	// 	if _, found := newSet[gvr]; !found || oldDef != newSet[gvr] {
+	// 		removedGVRs = append(removedGVRs, gvrString(gvr))
+	// 		oldDef.TearDown()
+	// 	}
+	// }
 
-	logging.WithObject(logger, syncTarget).WithValues("APIDomainKey", apiDomainKey).V(2).Info("Updating APIs for SyncTarget and APIDomainKey", "newGVRs", newGVRs, "preservedGVRs", preservedGVR, "removedGVRs", removedGVRs)
+	// logging.WithObject(logger, apiBinding).WithValues("APIDomainKey", apiDomainKey).V(2).Info("Updating APIs for APIBinding and APIDomainKey", "newGVRs", newGVRs, "preservedGVRs", preservedGVR, "removedGVRs", removedGVRs)
 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -148,83 +148,56 @@ func gvrString(gvr schema.GroupVersionResource) string {
 	return fmt.Sprintf("%s.%s.%s", gvr.Resource, gvr.Version, group)
 }
 
-// getAllAcceptedResourceSchemas return all resourceSchemas from APIExports defined in this syncTarget filtered by the status.syncedResource
-// of syncTarget such that only resources with accepted state is returned, together with their identityHash.
-func (c *APIReconciler) getAllAcceptedResourceSchemas(ctx context.Context, syncTarget *workloadv1alpha1.SyncTarget) (map[schema.GroupResource]*apisv1alpha1.APIResourceSchema, map[schema.GroupResource]string, error) {
+// getAllAcceptedResourceSchemas return all resourceSchemas from APIBindings, together with their identityHash.
+func (c *APIReconciler) getAllAcceptedResourceSchemas(ctx context.Context, apiBinding *apisv1alpha1.APIBinding) (map[schema.GroupResource]*apisv1alpha1.APIResourceSchema, map[schema.GroupResource]string, error) {
 	apiResourceSchemas := map[schema.GroupResource]*apisv1alpha1.APIResourceSchema{}
 
 	identityHashByGroupResource := map[schema.GroupResource]string{}
 
 	logger := klog.FromContext(ctx)
-	logger.V(4).Info("getting identity hashes for compatible APIs", "count", len(syncTarget.Status.SyncedResources))
+	logger.V(4).Info("getting identity hashes for compatible APIs", "count", len(apiBinding.Status.BoundResources))
+
+	var errs []error
 
 	// get all identityHash for compatible APIs
-	for _, syncedResource := range syncTarget.Status.SyncedResources {
+	for _, boundResource := range apiBinding.Status.BoundResources {
 		logger := logger.WithValues(
-			"group", syncedResource.Group,
-			"resource", syncedResource.Resource,
-			"identity", syncedResource.IdentityHash,
+			"group", boundResource.Group,
+			"resource", boundResource.Resource,
+			"identity", boundResource.Schema.IdentityHash,
 		)
-		if syncedResource.State == workloadv1alpha1.ResourceSchemaAcceptedState {
-			logger.V(4).Info("including synced resource because it is accepted")
-			identityHashByGroupResource[schema.GroupResource{
-				Group:    syncedResource.Group,
-				Resource: syncedResource.Resource,
-			}] = syncedResource.IdentityHash
-		} else {
-			logger.V(4).Info("excluding synced resource because it is unaccepted")
+		logger.V(4).Info("including bound resource")
+		identityHashByGroupResource[schema.GroupResource{
+			Group:    boundResource.Group,
+			Resource: boundResource.Resource,
+		}] = boundResource.Schema.IdentityHash
+
+		apiResourceSchemaClusterName, _ := logicalcluster.NewPath(apiBinding.Spec.Reference.Export.Path).Name()
+		apiResourceSchemaName := boundResource.Schema.Name
+		apiResourceSchema, err := c.apiResourceSchemaLister.Cluster(apiResourceSchemaClusterName).Get(apiResourceSchemaName)
+		if apierrors.IsNotFound(err) {
+			logger.V(4).Info("APIResourceSchema not found")
+			continue
 		}
-	}
-
-	logger.V(4).Info("processing supported APIExports", "count", len(syncTarget.Spec.SupportedAPIExports))
-	var errs []error
-	for _, exportRef := range syncTarget.Spec.SupportedAPIExports {
-		logger.V(4).Info("looking at export", "path", exportRef.Path, "name", exportRef.Export)
-
-		path := logicalcluster.NewPath(exportRef.Path)
-		if path.Empty() {
-			logger.V(4).Info("falling back to sync target's logical cluster for path")
-			path = logicalcluster.From(syncTarget).Path()
-		}
-
-		logger := logger.WithValues("path", path, "name", exportRef.Export)
-		logger.V(4).Info("getting APIExport")
-		apiExport, err := indexers.ByPathAndName[*apisv1alpha1.APIExport](apisv1alpha1.Resource("apiexports"), c.apiExportIndexer, path, exportRef.Export)
 		if err != nil {
-			logger.V(4).Error(err, "error getting APIExport")
+			logger.V(4).Error(err, "error getting APIResourceSchema")
 			errs = append(errs, err)
 			continue
 		}
 
-		logger.V(4).Info("checking APIExport's schemas", "count", len(apiExport.Spec.LatestResourceSchemas))
-		for _, schemaName := range apiExport.Spec.LatestResourceSchemas {
-			logger := logger.WithValues("schema", schemaName)
-			logger.V(4).Info("getting APIResourceSchema")
-			apiResourceSchema, err := c.apiResourceSchemaLister.Cluster(logicalcluster.From(apiExport)).Get(schemaName)
-			if apierrors.IsNotFound(err) {
-				logger.V(4).Info("APIResourceSchema not found")
-				continue
-			}
-			if err != nil {
-				logger.V(4).Error(err, "error getting APIResourceSchema")
-				errs = append(errs, err)
-				continue
-			}
+		gr := schema.GroupResource{
+			Group:    apiResourceSchema.Spec.Group,
+			Resource: apiResourceSchema.Spec.Names.Plural,
+		}
 
-			gr := schema.GroupResource{
-				Group:    apiResourceSchema.Spec.Group,
-				Resource: apiResourceSchema.Spec.Names.Plural,
-			}
+		logger = logger.WithValues("group", gr.Group, "resource", gr.Resource)
 
-			logger = logger.WithValues("group", gr.Group, "resource", gr.Resource)
-
-			// if identityHash does not exist, it is not a compatible API.
-			if _, ok := identityHashByGroupResource[gr]; ok {
-				logger.V(4).Info("identity found, including resource")
-				apiResourceSchemas[gr] = apiResourceSchema
-			} else {
-				logger.V(4).Info("identity not found, excluding resource")
-			}
+		// if identityHash does not exist, it is not a compatible API.
+		if _, ok := identityHashByGroupResource[gr]; ok {
+			logger.V(4).Info("identity found, including resource")
+			apiResourceSchemas[gr] = apiResourceSchema
+		} else {
+			logger.V(4).Info("identity not found, excluding resource")
 		}
 	}
 

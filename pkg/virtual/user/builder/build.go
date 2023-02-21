@@ -22,24 +22,15 @@ import (
 	kcpdynamic "github.com/kcp-dev/client-go/dynamic"
 	kcpkubernetesclientset "github.com/kcp-dev/client-go/kubernetes"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/tools/cache"
-
 	workloadv1alpha1 "github.com/kcp-dev/kcp/pkg/apis/workload/v1alpha1"
 	kcpinformers "github.com/kcp-dev/kcp/pkg/client/informers/externalversions"
-	"github.com/kcp-dev/kcp/pkg/indexers"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/forwardingregistry"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/rootapiserver"
-	"github.com/kcp-dev/kcp/pkg/virtual/syncer/controllers/apireconciler"
-	"github.com/kcp-dev/kcp/pkg/virtual/syncer/transformations"
-	"github.com/kcp-dev/kcp/pkg/virtual/syncer/upsyncer"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 const (
-	// SyncerVirtualWorkspaceName holds the name of the virtual workspace for the syncer, used to sync resources from upstream to downstream.
-	SyncerVirtualWorkspaceName string = "syncer"
-	// UpsyncerVirtualWorkspaceName holds the name of the virtual workspace for the upsyncer, used to sync resources from downstream to upstream.
-	UpsyncerVirtualWorkspaceName string = "upsyncer"
+	UserVirtualWorkspaceName string = "user"
 )
 
 // BuildVirtualWorkspace builds two virtual workspaces, SyncerVirtualWorkspace and UpsyncerVirtualWorkspace by instantiating a DynamicVirtualWorkspace which,
@@ -55,18 +46,22 @@ func BuildVirtualWorkspace(
 	}
 
 	// Setup the APIReconciler indexes to share between both virtualworkspaces.
-	indexers.AddIfNotPresentOrDie(
-		cachedKCPInformers.Workload().V1alpha1().SyncTargets().Informer().GetIndexer(),
-		cache.Indexers{
-			apireconciler.IndexSyncTargetsByExport: apireconciler.IndexSyncTargetsByExports,
-		},
-	)
-	indexers.AddIfNotPresentOrDie(
-		cachedKCPInformers.Apis().V1alpha1().APIExports().Informer().GetIndexer(),
-		cache.Indexers{
-			apireconciler.IndexAPIExportsByAPIResourceSchema: apireconciler.IndexAPIExportsByAPIResourceSchemas,
-		},
-	)
+
+	/*
+		FP: Old code, I don't know if we still need those
+		indexers.AddIfNotPresentOrDie(
+			cachedKCPInformers.Workload().V1alpha1().SyncTargets().Informer().GetIndexer(),
+			cache.Indexers{
+				apireconciler.IndexSyncTargetsByExport: apireconciler.IndexSyncTargetsByExports,
+			},
+		)
+		indexers.AddIfNotPresentOrDie(
+			cachedKCPInformers.Apis().V1alpha1().APIExports().Informer().GetIndexer(),
+			cache.Indexers{
+				apireconciler.IndexAPIExportsByAPIResourceSchema: apireconciler.IndexAPIExportsByAPIResourceSchemas,
+			},
+		)
+	*/
 
 	provider := templateProvider{
 		kubeClusterClient:    kubeClusterClient,
@@ -76,10 +71,47 @@ func BuildVirtualWorkspace(
 	}
 
 	return []rootapiserver.NamedVirtualWorkspace{
+		/*
+			FP: Old code. only for reference
+			{
+				Name: SyncerVirtualWorkspaceName,
+				VirtualWorkspace: provider.newTemplate(templateParameters{
+					virtualWorkspaceName:  SyncerVirtualWorkspaceName,
+					filteredResourceState: workloadv1alpha1.ResourceStateSync,
+					restProviderBuilder:   NewSyncerRestProvider,
+					allowedAPIFilter: func(apiGroupResource schema.GroupResource) bool {
+						// Don't expose Endpoints or Pods via the Syncer VirtualWorkspace.
+						if apiGroupResource.Group == "" && (apiGroupResource.Resource == "pods" || apiGroupResource.Resource == "endpoints") {
+							return false
+						}
+						return true
+					},
+					transformer: &transformations.SyncerResourceTransformer{
+						TransformationProvider:   &transformations.SpecDiffTransformation{},
+						SummarizingRulesProvider: &transformations.DefaultSummarizingRules{},
+					},
+					storageWrapperBuilder: forwardingregistry.WithStaticLabelSelector,
+				}).buildVirtualWorkspace(),
+			},
+			{
+				Name: UpsyncerVirtualWorkspaceName,
+				VirtualWorkspace: provider.newTemplate(templateParameters{
+					virtualWorkspaceName:  UpsyncerVirtualWorkspaceName,
+					filteredResourceState: workloadv1alpha1.ResourceStateUpsync,
+					restProviderBuilder:   NewUpSyncerRestProvider,
+					allowedAPIFilter: func(apiGroupResource schema.GroupResource) bool {
+						// Only allow persistentvolumes and Pods to be Upsynced.
+						return apiGroupResource.Group == "" && (apiGroupResource.Resource == "persistentvolumes" || apiGroupResource.Resource == "pods")
+					},
+					transformer:           &upsyncer.UpsyncerResourceTransformer{},
+					storageWrapperBuilder: upsyncer.WithStaticLabelSelectorAndInWriteCallsCheck,
+				}).buildVirtualWorkspace(),
+			},
+		*/
 		{
-			Name: SyncerVirtualWorkspaceName,
+			Name: UserVirtualWorkspaceName,
 			VirtualWorkspace: provider.newTemplate(templateParameters{
-				virtualWorkspaceName:  SyncerVirtualWorkspaceName,
+				virtualWorkspaceName:  UserVirtualWorkspaceName,
 				filteredResourceState: workloadv1alpha1.ResourceStateSync,
 				restProviderBuilder:   NewSyncerRestProvider,
 				allowedAPIFilter: func(apiGroupResource schema.GroupResource) bool {
@@ -87,27 +119,15 @@ func BuildVirtualWorkspace(
 					if apiGroupResource.Group == "" && (apiGroupResource.Resource == "pods" || apiGroupResource.Resource == "endpoints") {
 						return false
 					}
+
+					if strings.HasSuffix(apiGroupResource.Group, "kcp.io") {
+						return false
+					}
+
 					return true
 				},
-				transformer: &transformations.SyncerResourceTransformer{
-					TransformationProvider:   &transformations.SpecDiffTransformation{},
-					SummarizingRulesProvider: &transformations.DefaultSummarizingRules{},
-				},
+				transformer:           nil,
 				storageWrapperBuilder: forwardingregistry.WithStaticLabelSelector,
-			}).buildVirtualWorkspace(),
-		},
-		{
-			Name: UpsyncerVirtualWorkspaceName,
-			VirtualWorkspace: provider.newTemplate(templateParameters{
-				virtualWorkspaceName:  UpsyncerVirtualWorkspaceName,
-				filteredResourceState: workloadv1alpha1.ResourceStateUpsync,
-				restProviderBuilder:   NewUpSyncerRestProvider,
-				allowedAPIFilter: func(apiGroupResource schema.GroupResource) bool {
-					// Only allow persistentvolumes and Pods to be Upsynced.
-					return apiGroupResource.Group == "" && (apiGroupResource.Resource == "persistentvolumes" || apiGroupResource.Resource == "pods")
-				},
-				transformer:           &upsyncer.UpsyncerResourceTransformer{},
-				storageWrapperBuilder: upsyncer.WithStaticLabelSelectorAndInWriteCallsCheck,
 			}).buildVirtualWorkspace(),
 		},
 	}

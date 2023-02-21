@@ -29,6 +29,7 @@ import (
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/rootapiserver"
 	initializingworkspacesoptions "github.com/kcp-dev/kcp/pkg/virtual/initializingworkspaces/options"
 	synceroptions "github.com/kcp-dev/kcp/pkg/virtual/syncer/options"
+	useroptions "github.com/kcp-dev/kcp/pkg/virtual/user/options"
 )
 
 const virtualWorkspacesFlagPrefix = "virtual-workspaces-"
@@ -37,6 +38,7 @@ type Options struct {
 	Syncer                 *synceroptions.Syncer
 	APIExport              *apiexportoptions.APIExport
 	InitializingWorkspaces *initializingworkspacesoptions.InitializingWorkspaces
+	User                   *useroptions.Syncer
 }
 
 func NewOptions() *Options {
@@ -53,6 +55,7 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.Syncer.Validate(virtualWorkspacesFlagPrefix)...)
 	errs = append(errs, o.APIExport.Validate(virtualWorkspacesFlagPrefix)...)
 	errs = append(errs, o.InitializingWorkspaces.Validate(virtualWorkspacesFlagPrefix)...)
+	errs = append(errs, o.User.Validate(virtualWorkspacesFlagPrefix)...)
 
 	return errs
 }
@@ -82,7 +85,12 @@ func (o *Options) NewVirtualWorkspaces(
 		return nil, err
 	}
 
-	all, err := merge(syncer, apiexports, initializingworkspaces)
+	user, err := o.User.NewVirtualWorkspaces(rootPathPrefix, config, wildcardKcpInformers)
+	if err != nil {
+		return nil, err
+	}
+
+	all, err := merge(syncer, apiexports, initializingworkspaces, user)
 	if err != nil {
 		return nil, err
 	}

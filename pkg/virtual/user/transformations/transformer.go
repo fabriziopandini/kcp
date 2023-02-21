@@ -40,7 +40,7 @@ import (
 	"github.com/kcp-dev/kcp/pkg/syncer/shared"
 	dynamiccontext "github.com/kcp-dev/kcp/pkg/virtual/framework/dynamic/context"
 	"github.com/kcp-dev/kcp/pkg/virtual/framework/transforming"
-	syncercontext "github.com/kcp-dev/kcp/pkg/virtual/syncer/context"
+	syncercontext "github.com/kcp-dev/kcp/pkg/virtual/user/context"
 	. "github.com/kcp-dev/kcp/tmc/pkg/logging"
 )
 

@@ -16,6 +16,7 @@ limitations under the License.
 
 package apireconciler
 
+/*
 import (
 	"github.com/kcp-dev/logicalcluster/v3"
 
@@ -56,3 +57,4 @@ func IndexSyncTargetsByExports(obj interface{}) ([]string, error) {
 
 	return keys, nil
 }
+*/
