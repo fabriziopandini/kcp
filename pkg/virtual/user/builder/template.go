@@ -102,12 +102,7 @@ func (t *template) resolveRootPath(urlPath string, requestContext context.Contex
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return
 	}
-	path := logicalcluster.NewPath(parts[0])
-
-	clusterName, ok := path.Name()
-	if !ok {
-		return
-	}
+	workspacePath := logicalcluster.NewPath(parts[0])
 
 	realPath := "/"
 	if len(parts) > 1 {
@@ -133,20 +128,16 @@ func (t *template) resolveRootPath(urlPath string, requestContext context.Contex
 	if reqPath == logicalcluster.Wildcard {
 		cluster.Wildcard = true
 	} else {
-		reqClusterName, ok := reqPath.Name()
-		if !ok {
-			return
-		}
-		cluster.Name = reqClusterName
+		cluster.Name = logicalcluster.Name(reqPath.String())
 	}
 
 	// TODO: currently our virtual workspace is 1:1 with a workspace.
 	//   investigate if/how we can make our view cross workspaces.
-	if clusterName != cluster.Name {
+	if workspacePath.String() != cluster.Name.String() {
 		return
 	}
 
-	apiDomainKey := dynamiccontext.APIDomainKey(clusterName.String())
+	apiDomainKey := dynamiccontext.APIDomainKey(workspacePath.String())
 
 	// NOTE: those info can be used only in the lifecyle of this request (e.g authorize), not in the reconciler
 	// TODO: investigate if we really need WithCluster (we are not using it in authorize).
