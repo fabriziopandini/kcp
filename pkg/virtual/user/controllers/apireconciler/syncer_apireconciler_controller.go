@@ -26,7 +26,6 @@ import (
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
 	"github.com/kcp-dev/logicalcluster/v3"
 
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -76,16 +75,8 @@ func NewAPIReconciler(
 	logger := logging.WithReconciler(klog.Background(), ControllerName+virtualWorkspaceName)
 
 	apiBindingInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) { c.enqueueApiBinding(obj, logger, "") },
-		UpdateFunc: func(old, obj interface{}) {
-			oldBinding := old.(*apisv1alpha1.APIBinding)
-			newBinding := obj.(*apisv1alpha1.APIBinding)
-
-			// only enqueue when syncedResource is changed.
-			if !equality.Semantic.DeepEqual(oldBinding.Status.BoundResources, newBinding.Status.BoundResources) {
-				c.enqueueApiBinding(obj, logger, "")
-			}
-		},
+		AddFunc:    func(obj interface{}) { c.enqueueApiBinding(obj, logger, "") },
+		UpdateFunc: func(old, obj interface{}) { c.enqueueApiBinding(obj, logger, "") },
 		DeleteFunc: func(obj interface{}) { c.enqueueApiBinding(obj, logger, "") },
 	})
 
@@ -195,18 +186,20 @@ func (c *APIReconciler) process(ctx context.Context, key string) error {
 	// We temporarily fixed this by reading the path from the apiBinding, but this does not works
 	// on deletion, but this should be re-evaluated after all the changes.
 
-	apiDomainKey := dynamiccontext.APIDomainKey(clusterName.String())
-
 	apiBinding, err := c.apiBindingLister.Cluster(clusterName).Get(apiBindingName)
 	if apierrors.IsNotFound(err) {
-		c.removeAPIDefinitionSet(apiDomainKey)
+		// c.removeAPIDefinitionSet(apiDomainKey)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 
-	apiDomainKey = dynamiccontext.APIDomainKey(logicalcluster.From(apiBinding))
+	path, ok := apiBinding.GetAnnotations()["tanzu.com/path"]
+	if !ok {
+		return nil
+	}
+	apiDomainKey := dynamiccontext.APIDomainKey(path)
 	return c.reconcile(ctx, apiDomainKey, apiBinding)
 }
 

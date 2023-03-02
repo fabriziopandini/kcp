@@ -53,19 +53,17 @@ func (c *APIReconciler) reconcile(ctx context.Context, apiDomainKey dynamicconte
 		return err
 	}
 
-	if len(newSet) == 0 {
-		// add built-in apiResourceSchema
-		for _, apiResourceSchema := range syncerbuiltin.UserSchemas {
-			shallow := *apiResourceSchema
-			if shallow.Annotations == nil {
-				shallow.Annotations = make(map[string]string)
-			}
-			shallow.Annotations[logicalcluster.AnnotationKey] = logicalcluster.From(apiBinding).String()
-			apiResourceSchemas[schema.GroupResource{
-				Group:    apiResourceSchema.Spec.Group,
-				Resource: apiResourceSchema.Spec.Names.Plural,
-			}] = &shallow
+	// add built-in apiResourceSchema
+	for _, apiResourceSchema := range syncerbuiltin.UserSchemas {
+		shallow := *apiResourceSchema
+		if shallow.Annotations == nil {
+			shallow.Annotations = make(map[string]string)
 		}
+		shallow.Annotations[logicalcluster.AnnotationKey] = logicalcluster.From(apiBinding).String()
+		apiResourceSchemas[schema.GroupResource{
+			Group:    apiResourceSchema.Spec.Group,
+			Resource: apiResourceSchema.Spec.Names.Plural,
+		}] = &shallow
 	}
 
 	// reconcile APIs for APIResourceSchemas
