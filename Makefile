@@ -114,6 +114,7 @@ build: WHAT ?= ./cmd/... ./tmc/cmd/...
 build: require-jq require-go require-git verify-go-versions ## Build the project
 	GOOS=$(OS) GOARCH=$(ARCH) CGO_ENABLED=0 go build $(BUILDFLAGS) -ldflags="$(LDFLAGS)" -o bin $(WHAT)
 	ln -sf kubectl-workspace bin/kubectl-workspaces
+	ln -sf kubectl-workspace bin/kubectl-space
 	ln -sf kubectl-workspace bin/kubectl-ws
 .PHONY: build
 

@@ -417,7 +417,7 @@ func currentWorkspace(out io.Writer, host string, shortWorkspaceOutput shortWork
 		if shortWorkspaceOutput {
 			return nil
 		}
-		_, err = fmt.Fprintf(out, "Current workspace is the URL %q.\n", host)
+		_, err = fmt.Fprintf(out, "Current space is the URL %q.\n", host)
 		return err
 	}
 
@@ -426,7 +426,7 @@ func currentWorkspace(out io.Writer, host string, shortWorkspaceOutput shortWork
 		return err
 	}
 
-	message := fmt.Sprintf("Current workspace is %q", clusterName)
+	message := fmt.Sprintf("Current space is %q", clusterName)
 	if workspaceType != nil {
 		message += fmt.Sprintf(" (type %s)", logicalcluster.NewPath(workspaceType.Path).Join(string(workspaceType.Name)).String())
 	}
