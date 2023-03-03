@@ -87,7 +87,7 @@ func (t *template) resolveRootPath(urlPath string, requestContext context.Contex
 		return
 	}
 
-	rootPathPrefix := t.rootPathPrefix + t.virtualWorkspaceName + "/"
+	rootPathPrefix := t.rootPathPrefix + t.virtualWorkspaceName
 	completedContext = requestContext
 	if !strings.HasPrefix(urlPath, rootPathPrefix) {
 		return
@@ -95,32 +95,22 @@ func (t *template) resolveRootPath(urlPath string, requestContext context.Contex
 	withoutRootPathPrefix := strings.TrimPrefix(urlPath, rootPathPrefix)
 
 	// Incoming requests to this virtual workspace will look like:
-	//  /services/user/root:org:ws/clusters/*/api/v1/configmaps
+	//  /services/user/clusters/*/api/v1/configmaps
 	//                └─────────────────────────────┐
 	// Where the withoutRootPathPrefix starts here: ┘
-	parts := strings.SplitN(withoutRootPathPrefix, "/", 2)
-	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return
-	}
-	workspacePath := logicalcluster.NewPath(parts[0])
 
-	realPath := "/"
-	if len(parts) > 1 {
-		realPath += parts[1]
-	}
-
-	//  /services/user/root:org:ws/clusters/*/api/v1/configmaps
-	//                  ┌─────────┘
-	// We are now here: ┘
+	//  /services/user/clusters/*/api/v1/configmaps
+	//                 ───┘
+	// We are now here:┘
 	// Now, we parse out the logical cluster.
-	if !strings.HasPrefix(realPath, "/clusters/") {
+	if !strings.HasPrefix(withoutRootPathPrefix, "/clusters/") {
 		return // don't accept
 	}
 
-	withoutClustersPrefix := strings.TrimPrefix(realPath, "/clusters/")
-	parts = strings.SplitN(withoutClustersPrefix, "/", 2)
+	withoutClustersPrefix := strings.TrimPrefix(withoutRootPathPrefix, "/clusters/")
+	parts := strings.SplitN(withoutClustersPrefix, "/", 2)
 	reqPath := logicalcluster.NewPath(parts[0])
-	realPath = "/"
+	realPath := "/"
 	if len(parts) > 1 {
 		realPath += parts[1]
 	}
@@ -131,13 +121,8 @@ func (t *template) resolveRootPath(urlPath string, requestContext context.Contex
 		cluster.Name = logicalcluster.Name(reqPath.String())
 	}
 
-	// TODO: currently our virtual workspace is 1:1 with a workspace.
-	//   investigate if/how we can make our view cross workspaces.
-	if workspacePath.String() != cluster.Name.String() {
-		return
-	}
 
-	apiDomainKey := dynamiccontext.APIDomainKey(workspacePath.String())
+	apiDomainKey := dynamiccontext.APIDomainKey(reqPath.String())
 
 	// NOTE: those info can be used only in the lifecyle of this request (e.g authorize), not in the reconciler
 	// TODO: investigate if we really need WithCluster (we are not using it in authorize).
@@ -201,6 +186,7 @@ func (t *template) bootstrapManagement(mainConfig genericapiserver.CompletedConf
 			}, nil
 		},
 		t.allowedAPIFilter,
+		t.cachedKCPInformers.Apis().V1alpha1().APIExports(),
 	)
 	if err != nil {
 		return nil, err

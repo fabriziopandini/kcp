@@ -85,6 +85,7 @@ func NewUserRestProvider(ctx context.Context, clusterClient kcpdynamic.ClusterIn
 
 				registry.GetterFunc
 				registry.UpdaterFunc
+				registry.CreaterFunc
 				// patch is implicit as we have get + update
 
 				registry.TableConvertorFunc
@@ -96,6 +97,7 @@ func NewUserRestProvider(ctx context.Context, clusterClient kcpdynamic.ClusterIn
 
 				GetterFunc:  statusStorage.GetterFunc,
 				UpdaterFunc: statusStorage.UpdaterFunc,
+				CreaterFunc: statusStorage.Create,
 
 				TableConvertorFunc:      statusStorage.TableConvertorFunc,
 				CategoriesProviderFunc:  statusStorage.CategoriesProviderFunc,
@@ -114,6 +116,7 @@ func NewUserRestProvider(ctx context.Context, clusterClient kcpdynamic.ClusterIn
 			registry.ListerFunc
 			registry.UpdaterFunc
 			registry.WatcherFunc
+			registry.CreaterFunc
 
 			registry.TableConvertorFunc
 			registry.CategoriesProviderFunc
@@ -127,6 +130,7 @@ func NewUserRestProvider(ctx context.Context, clusterClient kcpdynamic.ClusterIn
 			ListerFunc:  storage.ListerFunc,
 			UpdaterFunc: storage.UpdaterFunc,
 			WatcherFunc: storage.WatcherFunc,
+			CreaterFunc: storage.CreaterFunc,
 
 			TableConvertorFunc:      storage.TableConvertorFunc,
 			CategoriesProviderFunc:  storage.CategoriesProviderFunc,

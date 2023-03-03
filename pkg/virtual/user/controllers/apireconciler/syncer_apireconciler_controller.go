@@ -55,6 +55,7 @@ func NewAPIReconciler(
 	apiResourceSchemaInformer apisv1alpha1informers.APIResourceSchemaClusterInformer,
 	createAPIDefinition CreateAPIDefinitionFunc,
 	allowedAPIfilter AllowedAPIfilterFunc,
+	apiExportInformer apisv1alpha1informers.APIExportClusterInformer,
 ) (*APIReconciler, error) {
 	queue := workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), ControllerName+virtualWorkspaceName)
 
@@ -68,6 +69,7 @@ func NewAPIReconciler(
 
 		createAPIDefinition: createAPIDefinition,
 		allowedAPIfilter:    allowedAPIfilter,
+		apiExportIndexer:    apiExportInformer.Informer().GetIndexer(),
 
 		apiSets: map[dynamiccontext.APIDomainKey]apidefinition.APIDefinitionSet{},
 	}
@@ -90,6 +92,7 @@ type APIReconciler struct {
 
 	apiBindingLister        apisv1alpha1listers.APIBindingClusterLister
 	apiResourceSchemaLister apisv1alpha1listers.APIResourceSchemaClusterLister
+	apiExportIndexer        cache.Indexer
 
 	queue workqueue.RateLimitingInterface
 

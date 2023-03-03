@@ -19,9 +19,11 @@ package apireconciler
 import (
 	"context"
 	"fmt"
+
 	syncerbuiltin "github.com/kcp-dev/kcp/pkg/virtual/user/schemas/builtin"
 	"github.com/kcp-dev/logicalcluster/v3"
 
+	"github.com/kcp-dev/kcp/pkg/indexers"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -176,9 +178,11 @@ func (c *APIReconciler) getAllAcceptedResourceSchemas(ctx context.Context, apiBi
 			Resource: boundResource.Resource,
 		}] = boundResource.Schema.IdentityHash
 
-		apiResourceSchemaClusterName, _ := logicalcluster.NewPath(apiBinding.Spec.Reference.Export.Path).Name()
+		path := logicalcluster.NewPath(apiBinding.Spec.Reference.Export.Path)
+		apiExport, err := indexers.ByPathAndName[*apisv1alpha1.APIExport](apisv1alpha1.Resource("apiexports"), c.apiExportIndexer, path, apiBinding.Spec.Reference.Export.Name)
+
 		apiResourceSchemaName := boundResource.Schema.Name
-		apiResourceSchema, err := c.apiResourceSchemaLister.Cluster(apiResourceSchemaClusterName).Get(apiResourceSchemaName)
+		apiResourceSchema, err := c.apiResourceSchemaLister.Cluster(logicalcluster.From(apiExport)).Get(apiResourceSchemaName)
 		if apierrors.IsNotFound(err) {
 			logger.V(4).Info("APIResourceSchema not found")
 			continue
