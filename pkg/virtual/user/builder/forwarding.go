@@ -111,6 +111,8 @@ func NewUserRestProvider(ctx context.Context, clusterClient kcpdynamic.ClusterIn
 			registry.FactoryFunc
 			registry.ListFactoryFunc
 			registry.DestroyerFunc
+			registry.GracefulDeleterFunc
+			registry.CollectionDeleterFunc
 
 			registry.GetterFunc
 			registry.ListerFunc
@@ -125,7 +127,9 @@ func NewUserRestProvider(ctx context.Context, clusterClient kcpdynamic.ClusterIn
 			FactoryFunc:     storage.FactoryFunc,
 			ListFactoryFunc: storage.ListFactoryFunc,
 			DestroyerFunc:   storage.DestroyerFunc,
-
+			CollectionDeleterFunc: storage.DeleteCollection,
+			GracefulDeleterFunc: storage.GracefulDeleterFunc,
+			
 			GetterFunc:  storage.GetterFunc,
 			ListerFunc:  storage.ListerFunc,
 			UpdaterFunc: storage.UpdaterFunc,
